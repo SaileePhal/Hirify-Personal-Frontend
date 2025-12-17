@@ -1,35 +1,37 @@
+// src/hooks/useAuth.ts
 import { useState, useEffect } from 'react';
-// We are keeping these types for structural compatibility, but they are technically 'mocked' now.
-import { User, Session } from '@supabase/supabase-js'; 
+import { Session } from '@supabase/supabase-js'; 
 import { supabase } from '@/lib/supabaseClient'; 
 import { useNavigate } from 'react-router-dom';
 
-// 🔥 FIX 1: Import getMyProfile
 import { apiLogin, apiSignup, getMyProfile } from '@/lib/api';
-// NOTE: You will also need to import an API function to fetch the user's profile
-// based on their token (e.g., getProfile) if your Flask backend supports it.
+
+// Helper function to decode JWT payload (only needs base64 decoding)
+const decodeJwt = (token: string): any | null => {
+  try {
+    // A JWT is header.payload.signature
+    const payload = token.split('.')[1];
+    // Base64 decode, replace URL-safe chars, and parse JSON
+    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+  } catch (e) {
+    console.error("Failed to decode JWT:", e);
+    return null;
+  }
+};
 
 export type UserRole = 'candidate' | 'recruiter';
 
-// 🔑 STEP 1: Define the FlaskUser interface to match your backend response
 export interface FlaskUser { 
   id: string; // The user ID from your Flask/database
-  // NOTE: If you are using 'name' in your components, keep it. 
-  // But if the backend only sends first_name/last_name, you can remove 'name' here.
-  name?: string; 
-  
-  // 🔥 FIX 2: Add first_name and last_name
+  name?: string; // Optional: for compatibility if needed
   first_name: string;
   last_name: string;
-  
   email: string;
   role: UserRole;
-  // Add company or any other required fields here
 }
 
-// Update AuthState to use FlaskUser instead of Supabase's User type
 interface AuthState {
-  user: FlaskUser | null; // Changed to FlaskUser
+  user: FlaskUser | null;
   session: Session | null;
   role: UserRole | null;
   loading: boolean;
@@ -43,96 +45,213 @@ export function useAuth() {
     loading: true,
   });
 
-  // 🔑 STEP 3: Update useEffect to read the manual token and load profile
+  const navigate = useNavigate(); // Hook for navigation
+
+  // Define the timer outside the functions so it can be managed
+  let refreshTimer: NodeJS.Timeout | null = null; 
+
+  // --- Token Refresh Mechanism ---
+  const refreshAccessToken = async (): Promise<boolean> => {
+    try {
+      console.log("Attempting to refresh token via Supabase...");
+      
+      // Use Supabase's internal mechanism to check the Refresh Token
+      const { data: { session }, error: refreshError } = await supabase.auth.refreshSession();
+      
+      if (refreshError || !session || !session.access_token) {
+          throw new Error(refreshError?.message || "Supabase failed to refresh session.");
+      }
+
+      // 1. Save the new Supabase Access Token (JWT)
+      localStorage.setItem('flask_access_token', session.access_token);
+      
+      // 2. Re-fetch the profile to ensure the state is up-to-date and token is fully validated by Flask
+      const { data: profileData, error: profileError } = await getMyProfile();
+      
+      if (profileError || !profileData) {
+          throw new Error(profileError || "Failed to fetch profile with new token.");
+      }
+      
+      // 3. Update state
+      setAuthState(prev => ({ 
+        ...prev, 
+        user: profileData, 
+        session: session as any,
+        role: profileData.role, 
+        loading: false 
+      }));
+
+      console.log("Token successfully refreshed and validated.");
+      return true;
+
+    } catch (e) {
+      console.error("Token refresh failed. Logging out.", e);
+      // Clear all state and storage on fatal refresh error
+      localStorage.removeItem('flask_access_token');
+      setAuthState({ user: null, session: null, role: null, loading: false });
+      return false;
+    }
+  };
+
+  // --- Schedule/Expiration Check Mechanism ---
+  const checkAndScheduleRefresh = (initialToken: string | null) => {
+    // Clear any existing timer
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+
+    const currentToken = initialToken || localStorage.getItem('flask_access_token');
+    if (!currentToken) return;
+
+    const decoded = decodeJwt(currentToken);
+    if (!decoded || !decoded.exp) return;
+
+    // Calculate time until expiry (in milliseconds)
+    const expiryTimeMs = decoded.exp * 1000;
+    const now = Date.now();
+    const expiresInMs = expiryTimeMs - now; 
+    
+    // Define a safe buffer (e.g., 5 minutes = 300,000 ms) before expiry to trigger refresh
+    const REFRESH_BUFFER = 5 * 60 * 1000; 
+    const isExpired = expiresInMs <= 0;
+
+    if (isExpired) {
+      console.log("Token already expired. Logging out.");
+      localStorage.removeItem('flask_access_token');
+      setAuthState({ user: null, session: null, role: null, loading: false });
+      return;
+    }
+
+    if (expiresInMs > REFRESH_BUFFER) {
+      // Token is valid and has enough time remaining. Schedule the refresh.
+      const timeToRefresh = expiresInMs - REFRESH_BUFFER;
+      
+      // Note: We use setTimeout for a single, delayed action, and then the action 
+      // itself reschedules the next check/refresh via a recursive call.
+      
+      console.log(`Token expires in ${Math.round(expiresInMs / 1000 / 60)} min. Scheduling refresh in ${Math.round(timeToRefresh / 1000)} seconds.`);
+      
+      // Use setTimeout for single execution
+      refreshTimer = setTimeout(async () => {
+          const success = await refreshAccessToken();
+          if (success) {
+            // Success: Reschedule based on the new token's expiry
+            checkAndScheduleRefresh(localStorage.getItem('flask_access_token'));
+          }
+      }, timeToRefresh);
+
+    } else {
+      // Token is valid but expiring soon (within 5 minutes). Refresh immediately.
+      console.log("Token expiring soon. Triggering immediate refresh.");
+      refreshAccessToken().then((success) => {
+        if (success) {
+          // Reschedule based on the new token's expiry
+          checkAndScheduleRefresh(localStorage.getItem('flask_access_token'));
+        }
+      });
+    }
+  };
+  
+  // --- useEffect (Initial Load/Cleanup) ---
   useEffect(() => {
-    // 1. Clear Supabase listeners and session checks
-    // We are commenting out the Supabase-specific logic since we are manual now.
-    // const { data: { subscription } } = supabase.auth.onAuthStateChange(...);
-    // supabase.auth.getSession().then(...); 
     
     const checkLocalSession = async () => {
+      setAuthState(prev => ({ ...prev, loading: true }));
       const token = localStorage.getItem('flask_access_token');
       
       if (token) {
-        // 🔥 CRITICAL FIX: Attempt to fetch the profile using the stored token
         try {
+          // 1. Try to validate current token with the backend
           const { data: profileData, error: profileError } = await getMyProfile();
           
           if (profileData) {
-            // Success: Profile data fetched and token is valid
+            // Success: Token is valid, set state and schedule the refresh timer
             setAuthState({ 
               user: profileData, 
               session: { access_token: token } as any, 
               role: profileData.role, 
               loading: false 
             });
-            return; // Exit, successfully loaded profile
+            checkAndScheduleRefresh(token);
+            return;
           } else if (profileError) {
-            // Token failed validation (e.g., expired/invalid or profile fetch failed)
-            localStorage.removeItem('flask_access_token'); // Clear the bad token
-            console.error("Token validation failed or profile not found. Clearing token.", profileError);
+            // 2. Token expired or invalid (e.g., error from Flask), attempt one final immediate refresh
+            console.warn("Initial token check failed, attempting refresh...", profileError);
+            const success = await refreshAccessToken(); 
+            if (success) {
+                checkAndScheduleRefresh(localStorage.getItem('flask_access_token'));
+                return;
+            }
           }
 
         } catch (e) {
-            // Catch network or unexpected errors
-            localStorage.removeItem('flask_access_token');
-            console.error("Failed to fetch profile due to exception. Clearing token.", e);
+            console.error("Initial check failed due to exception. Clearing token.", e);
         }
       } 
       
-      // If no token was found, or the token failed validation, set the final state
+      // If no token, or initial check/refresh failed
+      localStorage.removeItem('flask_access_token');
       setAuthState({ user: null, session: null, role: null, loading: false });
     };
 
     checkLocalSession();
     
-  }, []); // Dependecy array is empty, runs once on mount
-
-  const signUp = async (email: string, password: string, role: UserRole, name: string) => {
-    const { data, error } = await apiSignup(email, password, role, name);
+    // Cleanup function: CRITICAL to clear the timer when the component unmounts
+    return () => {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    };
     
-    // NOTE: For signup, you usually just return the success/error and let the user log in.
+  }, []); 
+
+  // --- Auth Actions ---
+
+  const signUp = async (email: string, password: string, role: UserRole, firstName: string, 
+    lastName: string) => {
+    const { data, error } = await apiSignup(email, password, role, firstName, lastName);
     return { data, error };
   };
 
   const signIn = async (email: string, password: string) => {
-    // 1. Call the Flask API
     const { data, error } = await apiLogin(email, password);
 
     if (error) {
-      // Return the error string back to Auth.tsx
       return { user: null, error };
     }
     
-    // 2. CRITICAL: Manually save the token and update state
-    // We assume data = { access_token: '...', user: { id: '...', role: '...', etc. } }
     if (data && data.access_token && data.user) {
-      // Save the token for subsequent API calls (used by getAccessToken)
       localStorage.setItem('flask_access_token', data.access_token);
       
-      // Manually set the user state based on Flask's response
-      // Cast the incoming user data to the FlaskUser interface
       const flaskUser: FlaskUser = data.user as FlaskUser; 
       
       setAuthState({
-        user: flaskUser, // Set the new user data
-        session: { access_token: data.access_token } as any, // Mock a session object for compatibility
+        user: flaskUser,
+        session: { access_token: data.access_token } as any,
         role: flaskUser.role,
         loading: false,
       });
 
+      // 🔥 CRITICAL: Schedule the first refresh check immediately after successful sign-in
+      checkAndScheduleRefresh(data.access_token);
+      
       return { user: flaskUser, error: null };
     } else {
-      // Handle case where Flask returns success but no token/user data
       return { user: null, error: 'Login failed: Server response missing token or user data.' };
     }
   };
 
   const signOut = async () => {
-    // Clear the manually saved token
     localStorage.removeItem('flask_access_token');
     
-    // Reset state
+    // Clear the timer on sign out
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+    
     setAuthState({
       user: null,
       session: null,
@@ -140,7 +259,8 @@ export function useAuth() {
       loading: false,
     });
     
-    // You can also add a call to your Flask backend to invalidate the token if you have such a route.
+    // Note: You might want to call supabase.auth.signOut() here too,
+    // to destroy the refresh token and session on the server.
     
     return { error: null };
   };
@@ -154,9 +274,6 @@ export function useAuth() {
     isRecruiter: authState.role === 'recruiter',
   };
 }
-
-// ... useRequireAuth logic remains the same ...
-// This now relies on auth.user being a FlaskUser object
 
 export function useRequireAuth(requiredRole?: UserRole) {
   const auth = useAuth();

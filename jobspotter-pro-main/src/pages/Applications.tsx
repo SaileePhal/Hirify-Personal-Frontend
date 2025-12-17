@@ -12,7 +12,7 @@ import {
   withdrawApplication, 
   Application 
 } from '@/lib/api';
-import { useRequireAuth } from '@/hooks/useAuth';
+import { useAuth, useRequireAuth } from '@/hooks/useAuth';
 import { toast } from '@/hooks/use-toast';
 import { FileText } from 'lucide-react';
 import {
@@ -32,6 +32,7 @@ const NON_EDITABLE_STATUSES = ['shortlisted', 'rejected', 'interview', 'selected
 
 export default function Applications() {
   useRequireAuth('candidate');
+  const { role, loading: authLoading } = useAuth();
   
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,6 +49,7 @@ export default function Applications() {
   const [withdrawId, setWithdrawId] = useState<string | null>(null);
 
   const fetchApplications = async () => {
+    if (authLoading || role !== 'candidate') return; // Stop unauthorized calls
     setLoading(true);
     setError(null);
     
@@ -68,9 +70,14 @@ export default function Applications() {
     setLoading(false);
   };
 
+  // useEffect(() => {
+  //   fetchApplications();
+  // }, [page]);
   useEffect(() => {
-    fetchApplications();
-  }, [page]);
+    if (!authLoading && role === 'candidate') {
+      fetchApplications();
+    }
+  }, [page, role, authLoading]);
 
   // 🔥 CRITICAL CHANGE: Check status before allowing edit
   const handleEdit = (application: Application) => {

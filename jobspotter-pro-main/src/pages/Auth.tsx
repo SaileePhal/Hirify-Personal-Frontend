@@ -54,9 +54,32 @@ const handleSubmit = async (e: React.FormEvent) => {
           setLoading(false);
           return;
         }
-        // --- FIX FOR SIGN UP ---
-        // This is correct for sign up, as it doesn't log the user in immediately
-        const { error: signUpError } = await signUp(email, password, role, name);
+        // 🔥 CRITICAL FIX 1: Split the Full Name into two parts
+        const nameParts = name.trim().split(/\s+/); // Splits by any amount of whitespace
+        
+        let firstName = nameParts[0] || '';
+        let lastName = '';
+        
+        if (nameParts.length > 1) {
+            // Join all parts after the first one to form the last name, handling multi-word last names
+            lastName = nameParts.slice(1).join(' '); 
+        }
+
+        // 🔥 CRITICAL FIX 2: Check for a valid split (at least a first name)
+        if (!firstName) {
+            setError('Please enter at least your first name.');
+            setLoading(false);
+            return;
+        }
+        
+        // Use an empty string for last name if only one name was provided
+        if (!lastName) {
+             lastName = ''; 
+        }
+
+        // 🔥 CRITICAL FIX 3: Pass first_name and last_name to signUp
+        // The signUp hook/function will need to be updated next.
+        const { error: signUpError } = await signUp(email, password, role, firstName, lastName);
         if (signUpError) {
           if (signUpError.includes('already registered')) {
             setError('This email is already registered. Please sign in.');
@@ -68,7 +91,15 @@ const handleSubmit = async (e: React.FormEvent) => {
         }
       }
     } catch (err) {
-      setError('An unexpected error occurred');
+      // 🔥 CRITICAL FIX: The HTTP 401 error is caught here as a thrown Error object
+      // which now contains the message "Invalid email or password".
+      if (err instanceof Error) {
+        // This will display the message "Invalid email or password"
+        setError(err.message); 
+      } else {
+        // Fallback for truly unknown errors
+        setError('An unexpected error occurred during the request.');
+      }
     } finally {
       setLoading(false);
     }

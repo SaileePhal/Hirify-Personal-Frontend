@@ -15,6 +15,7 @@ import { toast } from '@/hooks/use-toast';
 import { FileText } from 'lucide-react';
 // 🔥 ADD: Import useParams to read the job ID from the URL
 import { useParams } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth'; // 🔥 Add this import if not there
 
 export default function RecruiterApplications() {
   useRequireAuth('recruiter');
@@ -27,6 +28,7 @@ export default function RecruiterApplications() {
   // 🔥 ADD: Get the jobId from the route parameters
   // Assuming your route is /recruiter/applications/:jobId. It can be undefined if you hit /recruiter/applications directly.
   const { jobId } = useParams<{ jobId: string }>();
+  const { role, loading: authLoading } = useAuth(); // 🔥 Get auth state
 
   // --- New Helper Variables for Empty State ---
   // Check if the user is currently viewing a specific job's applicants
@@ -42,6 +44,10 @@ export default function RecruiterApplications() {
 
 
   const fetchApplications = async () => {
+    // 🛑 STOP: If auth is still loading or user isn't a recruiter, don't call the API
+    if (authLoading || role !== 'recruiter') {
+      return;
+    }
     setLoading(true);
     setError(null);
     
@@ -57,9 +63,15 @@ export default function RecruiterApplications() {
     setLoading(false);
   };
 
+  // useEffect(() => {
+  //   fetchApplications();
+  // }, [page, jobId]);
   useEffect(() => {
-    fetchApplications();
-  }, [page, jobId]);
+    // 🔥 Only fetch if auth is finished and we know the user is a recruiter
+    if (!authLoading && role === 'recruiter') {
+      fetchApplications();
+    }
+  }, [page, jobId, role, authLoading]); // 🔥 Add role and authLoading to dependencies
 
   // 🔥 FIX 1: Narrow the type parameter to match the recruiter actions.
   // We assume the API accepts 'shortlisted', 'rejected', 'interview', 'selected' 

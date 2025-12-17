@@ -46,7 +46,7 @@ export function Header() {
   const recruiterLinks = [
     { href: '/jobs', label: 'Browse Jobs', icon: Briefcase },
     { href: '/recruiter/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/recruiter/applications', label: 'Applications', icon: FileText },
+    // { href: '/recruiter/applications', label: 'Applications', icon: FileText },
   ];
 
   const links = role === 'recruiter' ? recruiterLinks : candidateLinks;

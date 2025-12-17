@@ -2,7 +2,9 @@ import { getAccessToken } from './supabaseClient';
 import { FlaskUser } from '../hooks/useAuth';
 
 // BASE_URL is correctly set: http://127.0.0.1:5000/api/v1
-const BASE_URL = 'http://127.0.0.1:5000/api/v1';
+// const BASE_URL = 'http://127.0.0.1:5000/api/v1';
+const BASE_URL = 'https://hirify-personal-1.onrender.com/api/v1';
+
 
 interface ApiResponse<T> {
   data: T | null;
@@ -77,11 +79,13 @@ export interface Application {
   applied_at: string;
   updated_at: string;
   job?: Job;
-  candidate?: {
-    id: string;
-    name: string;
-    email: string;
-  };
+  // candidate?: {
+  //   id: string;
+  //   name: string;
+  //   email: string;
+  // };
+  candidate_name?: string; 
+  candidate_email?: string;
 }
 
 // Interface for the response from /auth/protected
@@ -112,7 +116,8 @@ async function apiCall<T>(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      const customErrorMessage = errorData.error || errorData.message;
+      throw new Error(customErrorMessage || `HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();
@@ -133,10 +138,12 @@ export async function apiLogin(email: string, password: string): Promise<ApiResp
   });
 }
 
-export async function apiSignup(email: string, password: string, role: string, name: string): Promise<ApiResponse<any>> {
+export async function apiSignup(email: string, password: string, role: string, firstName: string, 
+    lastName: string): Promise<ApiResponse<any>> {
   return apiCall<any>('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password, role, name }),
+    body: JSON.stringify({ email, password, role, first_name: firstName, 
+        last_name: lastName }),
   });
 }
 // ============ JOB ENDPOINTS ============

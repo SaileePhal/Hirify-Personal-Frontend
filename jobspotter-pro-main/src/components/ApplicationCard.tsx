@@ -31,6 +31,7 @@ export function ApplicationCard({
   onWithdraw,
   onStatusChange
 }: ApplicationCardProps) {
+  
   return (
     <div className="rounded-xl border border-border bg-card p-6 shadow-card transition-all duration-300 hover:shadow-card-hover">
       <div className="flex items-start justify-between gap-4">
@@ -57,16 +58,20 @@ export function ApplicationCard({
             </div>
           )}
 
-          {isRecruiter && application.candidate && (
+          {isRecruiter && application.candidate_name && ( // 🔥 TWEAK 1: Only need to check for name to display the card
             <div className="mb-3 rounded-lg bg-secondary p-3">
               <div className="flex items-center gap-2 text-sm">
                 <User className="h-4 w-4 text-muted-foreground" />
                 <span className="font-medium text-foreground">
-                  {application.candidate.name}
+                  {application.candidate_name}
                 </span>
-                <span className="text-muted-foreground">
-                  ({application.candidate.email})
-                </span>
+                
+                {/* 🔥 TWEAK 2: Only display the email span if it exists AND is NOT "N/A" */}
+                {application.candidate_email && application.candidate_email !== 'N/A' && (
+                  <span className="text-muted-foreground">
+                    ({application.candidate_email})
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -114,6 +119,14 @@ export function ApplicationCard({
               onClick={() => onStatusChange(application.id, 'shortlisted')} 
             >
               Shortlist
+            </Button>
+            <Button
+              // 🔥 FIX 2: Add Interview button
+              variant={application.status === 'interview' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => onStatusChange(application.id, 'interview')}
+            >
+              Interview
             </Button>
             <Button
               variant={application.status === 'selected' ? 'success' : 'outline'}
